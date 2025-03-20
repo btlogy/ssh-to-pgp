@@ -35,34 +35,49 @@ func SSHPrivateKeyToPGP(sshPrivateKey []byte, name string, comment string, email
 
 	// Let's make keys reproducible
 	timeNull := time.Unix(0, 0)
+	isPrimaryID := true
+	selfSignature := &packet.Signature{
+		CreationTime:              timeNull,
+		SigType:                   packet.SigTypePositiveCert,
+		PubKeyAlgo:                packet.PubKeyAlgoRSA,
+		Hash:                      crypto.SHA256,
+		IsPrimaryId:               &isPrimaryID,
+		FlagsValid:                true,
+		FlagSign:                  true,
+		FlagCertify:               true,
+		FlagEncryptStorage:        true,
+		FlagEncryptCommunications: true,
+		// FlagAuthenticate:          true,
+	}
 
 	gpgKey := &openpgp.Entity{
 		PrimaryKey: packet.NewRSAPublicKey(timeNull, &key.PublicKey),
 		PrivateKey: packet.NewRSAPrivateKey(timeNull, key),
 		Identities: make(map[string]*openpgp.Identity),
 	}
+
 	uid := packet.NewUserId(name, comment, email)
-	isPrimaryID := true
+
+	selfSignature.IssuerKeyId = &gpgKey.PrimaryKey.KeyId
+	selfSignature.SignerUserId = &uid.Id
+	gpgKey.SelfSignature = selfSignature
+	// gpgKey.Signatures= []*packet.Signature{selfSignature}
+
 	gpgKey.Identities[uid.Id] = &openpgp.Identity{
 		Name:   uid.Id,
 		UserId: uid,
-		SelfSignature: &packet.Signature{
-			CreationTime:              timeNull,
-			SigType:                   packet.SigTypePositiveCert,
-			PubKeyAlgo:                packet.PubKeyAlgoRSA,
-			Hash:                      crypto.SHA256,
-			IsPrimaryId:               &isPrimaryID,
-			FlagsValid:                true,
-			FlagSign:                  true,
-			FlagCertify:               true,
-			FlagEncryptStorage:        true,
-			FlagEncryptCommunications: true,
-			IssuerKeyId:               &gpgKey.PrimaryKey.KeyId,
-		},
+		SelfSignature: selfSignature,
+		Signatures: []*packet.Signature{selfSignature},
 	}
+
 	err = gpgKey.Identities[uid.Id].SelfSignature.SignUserId(uid.Id, gpgKey.PrimaryKey, gpgKey.PrivateKey, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to self-sign the key: %w", err)
+	}
+
+	err = gpgKey.SelfSignature.SignKey( gpgKey.PrimaryKey, gpgKey.PrivateKey, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to self-sign the key: %w", err)
 	}
 
 	return gpgKey, nil
